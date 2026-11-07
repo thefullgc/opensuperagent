@@ -172,7 +172,8 @@ export class TaskRepo {
         .prepare(
           `SELECT t.* FROM tasks t
            JOIN subscriptions s ON s.task_id = t.id
-           WHERE s.thread_id = ? AND t.status IN (${placeholders})`,
+           WHERE s.thread_id = ? AND t.status IN (${placeholders})
+           ORDER BY t.created_at, t.id`,
         )
         .all(threadId, ...OPEN_STATUSES),
     ).map(mapTask);

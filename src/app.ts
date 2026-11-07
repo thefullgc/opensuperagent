@@ -25,6 +25,12 @@ import type { IngressInput } from "./types.js";
 import type { LlmConfig } from "./llm/types.js";
 import type { IngressResult } from "./ingress/index.js";
 
+function routeTargetIds(decision: IngressResult["decision"]): string[] {
+  if (decision?.kind === "task") return [decision.taskId];
+  if (decision?.kind === "tasks") return decision.taskIds;
+  return [];
+}
+
 export class App {
   readonly paths: DataPaths;
   readonly store: Store;
@@ -236,18 +242,26 @@ export class App {
     stopTaskId?: string;
   }): IngressResult {
     const result = this.console.submit(input);
-    if (input.steer && result.decision?.kind === "task")
-      void this.sessions.get(result.decision.taskId)?.abort("steer");
-    this.events.emit({
-      scope: input.taskId ?? "router",
-      kind: "ingress",
-      summary: input.text.slice(0, 120),
-      payload: {
-        triggerId: result.trigger.id,
-        decision: result.decision,
-        duplicate: result.duplicate,
-      },
-    });
+    if (input.steer) {
+      for (const taskId of routeTargetIds(result.decision))
+        void this.sessions.get(taskId)?.abort("steer");
+    }
+    const scopes =
+      result.decision?.kind === "tasks"
+        ? result.decision.taskIds
+        : [input.taskId ?? "router"];
+    for (const scope of scopes) {
+      this.events.emit({
+        scope,
+        kind: "ingress",
+        summary: input.text.slice(0, 120),
+        payload: {
+          triggerId: result.trigger.id,
+          decision: result.decision,
+          duplicate: result.duplicate,
+        },
+      });
+    }
     if (
       result.decision?.kind === "control" &&
       result.decision.action === "stop"
@@ -283,18 +297,23 @@ export class App {
       }
       return accepted;
     });
-    this.events.emit({
-      scope:
-        result.decision?.kind === "task" ? result.decision.taskId : "router",
-      kind: "ingress",
-      summary: `${input.source}: ${input.preview.slice(0, 120)}`,
-      payload: {
-        triggerId: result.trigger.id,
-        source: input.source,
-        decision: result.decision,
-        duplicate: result.duplicate,
-      },
-    });
+    const scopes =
+      result.decision?.kind === "tasks"
+        ? result.decision.taskIds
+        : [result.decision?.kind === "task" ? result.decision.taskId : "router"];
+    for (const scope of scopes) {
+      this.events.emit({
+        scope,
+        kind: "ingress",
+        summary: `${input.source}: ${input.preview.slice(0, 120)}`,
+        payload: {
+          triggerId: result.trigger.id,
+          source: input.source,
+          decision: result.decision,
+          duplicate: result.duplicate,
+        },
+      });
+    }
     if (result.decision?.kind === "control")
       this.handleStop(result.decision.taskId);
     return result;

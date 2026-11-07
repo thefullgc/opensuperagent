@@ -14,6 +14,7 @@ export interface IngressResult {
   duplicate: boolean;
   decision: RouteDecision | null;
   inboxItemId: string | null;
+  inboxItemIds: string[];
 }
 
 export class Ingress {
@@ -50,6 +51,7 @@ export class Ingress {
         duplicate: true,
         decision: null,
         inboxItemId: null,
+        inboxItemIds: [],
       };
     }
 
@@ -71,20 +73,38 @@ export class Ingress {
         status: "routed",
       });
       // Control path is executed by App immediately, without an inbox item.
-      if (decision.kind === "control")
-        return { trigger, duplicate: false, decision, inboxItemId: null };
+      if (decision.kind === "control") {
+        return {
+          trigger,
+          duplicate: false,
+          decision,
+          inboxItemId: null,
+          inboxItemIds: [],
+        };
+      }
 
-      const target = decision.kind === "task" ? decision.taskId : "router";
-      const { item } = this.store.inbox.insertOrGet({
-        target,
-        triggerId: trigger.id,
-        steer: input.steer,
-      });
+      // A shared Thread can have several open subscribers. Fan out one durable
+      // inbox row per subscriber; each Worker keeps its own isolated context.
+      const targets =
+        decision.kind === "task"
+          ? [decision.taskId]
+          : decision.kind === "tasks"
+            ? decision.taskIds
+            : ["router"];
+      const items = targets.map(
+        (target) =>
+          this.store.inbox.insertOrGet({
+            target,
+            triggerId: trigger.id,
+            steer: input.steer,
+          }).item,
+      );
       return {
         trigger,
         duplicate: false,
         decision,
-        inboxItemId: item.id,
+        inboxItemId: items[0]?.id ?? null,
+        inboxItemIds: items.map((item) => item.id),
       };
     });
   }
@@ -101,6 +121,7 @@ export class Ingress {
           duplicate: true,
           decision: { kind: "ignore", reason },
           inboxItemId: null,
+          inboxItemIds: [],
         };
       }
       const payloadRef = this.writePayload(input);
@@ -118,6 +139,7 @@ export class Ingress {
         duplicate: false,
         decision: { kind: "ignore", reason },
         inboxItemId: null,
+        inboxItemIds: [],
       };
     });
   }

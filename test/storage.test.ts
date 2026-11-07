@@ -89,6 +89,47 @@ describe("storage + routing", () => {
     }
   });
 
+  it("routes every open subscription on a shared thread", () => {
+    const dir = mkdtempSync(join(tmpdir(), "osa-"));
+    try {
+      const store = Store.open(join(dir, "state.sqlite"));
+      importSeed(store, join(root, "seed"));
+      const def = store.catalog.getDefinition("coding")!;
+      const makeTask = (name: string, status: "active" | "completed") =>
+        store.tasks.insert({
+          ownerId: "owner",
+          objective: name,
+          definition: def,
+          originTriggerId: "fixture",
+          workspacePath: join(dir, name),
+          status,
+        });
+      const first = makeTask("first", "active");
+      const second = makeTask("second", "active");
+      const closed = makeTask("closed", "completed");
+      store.tasks.addSubscription(first.id, "thread-shared");
+      store.tasks.addSubscription(second.id, "thread-shared");
+      store.tasks.addSubscription(closed.id, "thread-shared");
+
+      const decision = decideRoute(store, { threadId: "thread-shared" });
+      assert.equal(decision.kind, "tasks");
+      if (decision.kind !== "tasks") throw new Error("expected tasks");
+      assert.deepEqual(
+        new Set(decision.taskIds),
+        new Set([first.id, second.id]),
+      );
+
+      store.tasks.transition(second.id, "active", "completed");
+      assert.deepEqual(decideRoute(store, { threadId: "thread-shared" }), {
+        kind: "task",
+        taskId: first.id,
+      });
+      store.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("routes unique subscription to task", () => {
     const dir = mkdtempSync(join(tmpdir(), "osa-"));
     try {
