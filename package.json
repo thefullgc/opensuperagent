@@ -2,6 +2,10 @@
   "name": "opensuperagent",
   "version": "0.1.1",
   "description": "A self-hosted, open-source Super-agent inspired by DeepSeek: one entry point, multiple tasks, persistent progress.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thefullgc/opensuperagent.git"
+  },
   "type": "module",
   "engines": {
     "node": ">=22.13.0"
