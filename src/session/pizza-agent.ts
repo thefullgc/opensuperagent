@@ -375,7 +375,8 @@ export function createPizzaFacadeFactory(deps: {
         llmCalls = 0;
         overBudget = false;
         // Snapshot credentials and model once per Run, including reused sessions.
-        facade.setModel(resolveModel(), "off");
+        const runModel = resolveModel();
+        facade.setModel(runModel, "off");
         if (isRouter && deps.routerSystemPrompt)
           facade.systemPrompt = deps.routerSystemPrompt();
         activeRunId = active.id;
@@ -384,7 +385,7 @@ export function createPizzaFacadeFactory(deps: {
           scope: owner,
           kind: "prompt",
           summary: text.slice(0, 200),
-          payload: { runId: active.id, model: modelName },
+          payload: { runId: active.id, model: modelName, resolvedModel: { provider: runModel.provider, id: runModel.id } },
         });
         const startSequence = eventStore.head_sequence ?? 0;
         try {

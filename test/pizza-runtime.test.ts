@@ -21,6 +21,8 @@ it("uses the actual Pizza SDK with persistent run receipts and complete tool tel
     const id = h.task();
     await h.app.workerLoop.tick(id);
     assert.equal(h.app.engineMode, "pizza");
+    const prompt = h.app.events.list(id).find(event => event.kind === "prompt");
+    assert.deepEqual((prompt?.payload as { resolvedModel?: unknown })?.resolvedModel, { provider: "probe", id: h.requests[0].model });
     const tool = h.app.events
       .list(id)
       .find((e) => e.kind === "tool" && e.summary === "cli");

@@ -132,14 +132,93 @@ export class ConsoleView {
   }
 
   private inputs(runId: string) {
-    return rows<{ id: string; source: string; preview: string; steer: number }>(
+    return rows<{
+      id: string;
+      source: string;
+      preview: string;
+      steer: number;
+      threadId: string | null;
+      createdAt: string;
+    }>(
       this.app.store.db
         .prepare(
-          `SELECT t.id, t.source, t.preview, i.steer FROM inbox i
+          `SELECT t.id, t.source, t.preview, i.steer, t.thread_id AS threadId, t.created_at AS createdAt FROM inbox i
         JOIN triggers t ON t.id = i.trigger_id WHERE i.run_id = ? ORDER BY i.created_at`,
         )
         .all(runId),
     );
+  }
+
+  routerRun(id: string) {
+    const run = this.app.store.runs.get(id);
+    const session = this.app.store.sessions.getByOwner("router");
+    if (!run || run.sessionId !== session?.id) return null;
+    const journal = rows<{
+      id: string;
+      scope: string;
+      kind: string;
+      summary: string;
+      payload: string;
+      created_at: string;
+    }>(
+      this.app.store.db
+        .prepare(
+          "SELECT * FROM journal WHERE scope = 'router' AND json_extract(payload, '$.runId') = ? ORDER BY created_at, rowid",
+        )
+        .all(id),
+    ).map((event) => ({
+      id: event.id,
+      scope: event.scope,
+      kind: event.kind,
+      summary: event.summary,
+      payload: JSON.parse(event.payload) as unknown,
+      createdAt: event.created_at,
+    }));
+    const argumentsByCall = new Map<string, Record<string, unknown>>();
+    for (const event of journal) {
+      if (
+        event.kind !== "tool" ||
+        !event.payload ||
+        typeof event.payload !== "object"
+      )
+        continue;
+      const payload = event.payload as Record<string, unknown>;
+      if (
+        typeof payload.toolCallId === "string" &&
+        payload.args &&
+        typeof payload.args === "object" &&
+        !Array.isArray(payload.args)
+      )
+        argumentsByCall.set(
+          payload.toolCallId,
+          payload.args as Record<string, unknown>,
+        );
+    }
+    const actions = this.app.store.toolActions.listByRun(id).map((action) => {
+      const result =
+        action.result && typeof action.result === "object"
+          ? (action.result as Record<string, unknown>)
+          : {};
+      return {
+        ...action,
+        args: argumentsByCall.get(action.toolCallId) ?? null,
+        replyText:
+          action.tool === "reply" && typeof result.deliveryId === "string"
+            ? (this.app.store.deliveries.get(result.deliveryId)?.content ??
+              null)
+            : null,
+      };
+    });
+    const prompt = journal.find((event) => event.kind === "prompt")?.payload as
+      | { resolvedModel?: { provider?: unknown; id?: unknown } }
+      | null
+      | undefined;
+    const resolved = prompt?.resolvedModel;
+    const model =
+      typeof resolved?.provider === "string" && typeof resolved.id === "string"
+        ? { provider: resolved.provider, model: resolved.id }
+        : null;
+    return { ...run, inputs: this.inputs(id), actions, journal, model };
   }
 
   taskFlow(id: string) {

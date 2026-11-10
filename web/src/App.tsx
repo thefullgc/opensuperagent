@@ -2,7 +2,6 @@ import { t as tr, useLocale } from "./i18n";
 import { LanguageSelector } from "./components/LanguageSelector";
 import { ConnectionsPage } from "./pages/ConnectionsPage";
 import { SkillsPage } from "./pages/SkillsPage";
-import { RouterPage } from "./pages/RouterPage";
 import { TasksPage } from "./pages/TasksPage";
 import { TaskList } from "./components/TaskList";
 import { shortId, time } from "./lib/presentation";
@@ -62,6 +61,9 @@ const SystemPage = lazy(() =>
   import("./pages/SystemPage").then((module) => ({
     default: module.SystemPage,
   })),
+);
+const RouterPage = lazy(() =>
+  import("./pages/RouterPage").then((module) => ({ default: module.RouterPage })),
 );
 const FlowCanvas = lazy(() =>
   import("./components/FlowCanvas").then((module) => ({
@@ -534,12 +536,15 @@ export default function App() {
                 />
               )}
               {page === "router" && (
-                <RouterPage
-                  data={data}
-                  onTask={openTask}
-                  refresh={refresh}
-                  notify={notify}
-                />
+                <Suspense fallback={<div className="page-loading"><CircleNotchIcon className="spin" size={26} /></div>}>
+                  <RouterPage
+                    data={data}
+                    onTask={openTask}
+                    onWorker={openWorker}
+                    refresh={refresh}
+                    notify={notify}
+                  />
+                </Suspense>
               )}
               {page === "workers" && (
                 <>

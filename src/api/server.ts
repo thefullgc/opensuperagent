@@ -283,6 +283,10 @@ export class ApiServer {
       if (req.method === "GET" && path === "/api/overview") {
         return json(res, 200, view.overview());
       }
+      if (req.method === "GET" && /^\/api\/router\/runs\/run_[a-zA-Z0-9]+$/.test(path)) {
+        const trace = view.routerRun(path.split("/")[4]!);
+        return json(res, trace ? 200 : 404, trace ?? { error: "not found" });
+      }
       if (req.method === "GET" && path === "/api/messages") {
         const offset = Number(url.searchParams.get("offset") ?? 0);
         if (!Number.isSafeInteger(offset) || offset < 0) {

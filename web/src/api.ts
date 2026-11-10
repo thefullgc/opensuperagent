@@ -74,6 +74,8 @@ export interface Run {
     source: string;
     preview: string;
     steer: number;
+    threadId?: string | null;
+    createdAt?: string;
   }[];
   actions: {
     tool: string;
@@ -81,6 +83,11 @@ export interface Run {
     result: unknown;
     createdAt: string;
   }[];
+}
+export interface RouterTrace extends Omit<Run, "actions"> {
+  model?: { provider: string; model: string } | null;
+  actions: (Run["actions"][number] & { args: Record<string, unknown> | null; replyText: string | null })[];
+  journal: JournalEvent[];
 }
 export interface Overview {
   tasks: Task[];
@@ -299,6 +306,7 @@ export const api = {
       warning?: string;
     }>(`/api/settings/adapters/${id}/test`, { method: "POST", body: "{}" }),
   overview: () => req<Overview>("/api/overview"),
+  routerTrace: (id: string, signal?: AbortSignal) => req<RouterTrace>(`/api/router/runs/${encodeURIComponent(id)}`, { signal }),
   flow: (id: string) =>
     req<TaskFlow>(`/api/tasks/${encodeURIComponent(id)}/flow`),
   skill: (name: string) =>
