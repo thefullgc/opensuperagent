@@ -72,21 +72,22 @@ it("records foreground and background launch failures without crashing or leavin
 
 it("wakes the Worker exactly once when supervision runs before a background completion is pumped", async () => {
   const prompts: string[] = [];
-  const h = temporaryApp((factory) => async (input) => ({
-    ...(await factory(input)),
-    async prompt(text: string) {
+  const h = temporaryApp((factory) => async (input) => {
+    const handle = await factory(input);
+    return { ...handle, async prompt(text: string) {
       if (input.session.owner !== "router") prompts.push(text);
-    },
-  }));
+      await handle.prompt(text);
+    } };
+  });
   try {
     const id = task(h);
-    await h.app.workerLoop.tick(id);
-    prompts.length = 0;
     const op = h.app.runner.startBackground({
       taskId: id,
       cwd: h.app.store.tasks.get(id)!.workspacePath,
       cmd: "printf done",
     });
+    assert.equal(await h.app.workerLoop.tick(id), false);
+    assert.equal(prompts.length, 0);
     await eventually(() => existsSync(h.app.paths.operationDir(op.id) + "/result.json"));
 
     await h.app.supervisor.check();

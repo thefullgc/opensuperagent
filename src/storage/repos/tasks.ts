@@ -109,6 +109,13 @@ export class TaskRepo {
     return Number(result.changes) > 0;
   }
 
+  retry(id: string): boolean {
+    const result = this.db.prepare(
+      "UPDATE tasks SET status = 'pending', result = NULL, updated_at = ? WHERE id = ? AND status = 'failed'",
+    ).run(nowIso(), id);
+    return Number(result.changes) > 0;
+  }
+
   complete(
     id: string,
     from: TaskStatus[],

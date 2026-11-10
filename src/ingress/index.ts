@@ -63,6 +63,8 @@ export class Ingress {
 
     return this.store.transaction(() => {
       const payloadRef = this.writePayload(input);
+      // Only an explicit new message to this Task authorizes retrying failed work.
+      if (input.taskId && !input.control) this.store.tasks.retry(input.taskId);
       const decision = decideRoute(this.store, {
         taskId: input.taskId,
         threadId: input.threadId,

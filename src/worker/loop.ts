@@ -2,7 +2,11 @@ import { triggerText } from "../ingress/text.js";
 import type { DataPaths } from "../paths.js";
 import type { Store } from "../storage/index.js";
 import type { SessionManager } from "../session/manager.js";
-import type { InboxItem, Trigger } from "../types.js";
+import type { InboxItem, Run, Trigger } from "../types.js";
+import type { WorkerControls } from "./controls.js";
+import type { EventBus } from "../events/bus.js";
+
+const MAX_RESULT_FOLLOWUPS = 2;
 
 /**
  * Worker turn loop: one session per Task, bounded by max_active_tasks.
@@ -14,8 +18,11 @@ export class WorkerLoop {
   constructor(
     private readonly store: Store,
     private readonly sessions: SessionManager,
+    private readonly controls: WorkerControls,
+    private readonly events: EventBus,
     private readonly maxConcurrent = 2,
     private readonly paths?: DataPaths,
+    private readonly redact = (message: string) => message,
   ) {}
 
   async tickAll(): Promise<number> {
@@ -45,10 +52,10 @@ export class WorkerLoop {
       pending.length === 0 &&
       !this.store.runs.findActive(this.sessions.ensureSession(taskId).id)
     ) {
-      if (task.status === "active") {
-        this.store.tasks.transition(taskId, "active", "waiting");
-      }
-      return false;
+      const latest = this.store.runs.latest(
+        this.sessions.ensureSession(taskId).id,
+      );
+      return latest ? this.settleRun(taskId, latest) : false;
     }
 
     this.busy.add(taskId);
@@ -106,6 +113,11 @@ export class WorkerLoop {
         await handle.prompt(batch.promptText);
       } catch (error) {
         this.store.runs.transition(batch.run.id, "submitted", "failed");
+        this.failRun(
+          taskId,
+          batch.run,
+          this.redact(error instanceof Error ? error.message : String(error)),
+        );
         throw error;
       } finally {
         if (this.store.runs.get(batch.run.id)?.status === "submitted") {
@@ -114,19 +126,122 @@ export class WorkerLoop {
         this.store.inbox.markDone(batch.items.map((i) => i.id));
       }
 
-      const still = this.store.inbox.listPending(taskId);
-      const fresh = this.store.tasks.get(taskId);
-      if (
-        fresh &&
-        !this.store.tasks.isTerminal(fresh.status) &&
-        still.length === 0
-      ) {
-        this.store.tasks.transition(taskId, "active", "waiting");
-      }
+      this.settleRun(taskId, this.store.runs.get(batch.run.id)!);
       return true;
     } finally {
       this.busy.delete(taskId);
     }
+  }
+
+  private hasResult(runId: string): boolean {
+    return this.store.toolActions
+      .listByRun(runId)
+      .some(
+        (action) =>
+          action.tool === "submit_result" &&
+          (action.result as { ok?: boolean } | null)?.ok === true,
+      );
+  }
+
+  private failRun(taskId: string, run: Run, reason: string): boolean {
+    const task = this.store.tasks.get(taskId);
+    if (
+      !task ||
+      this.store.tasks.isTerminal(task.status) ||
+      this.hasResult(run.id) ||
+      this.store.inbox.listPending(taskId).length ||
+      this.store.operations.findActiveForTask(taskId)
+    )
+      return false;
+    const summary = this.redact(reason);
+    this.controls.submitResult({
+      taskId,
+      sessionId: run.sessionId,
+      runId: run.id,
+      toolCallId: `system:result-failure:${run.id}`,
+      outcome: "failed",
+      notice: `任务执行未完成：${summary}`,
+      summary,
+    });
+    this.events.emit({
+      scope: taskId,
+      kind: "error",
+      summary,
+      payload: { runId: run.id },
+    });
+    return true;
+  }
+
+  private settleRun(taskId: string, run: Run): boolean {
+    const task = this.store.tasks.get(taskId);
+    if (
+      !task ||
+      this.store.tasks.isTerminal(task.status) ||
+      this.hasResult(run.id) ||
+      this.store.inbox.listPending(taskId).length ||
+      this.store.operations.findActiveForTask(taskId)
+    )
+      return false;
+    if (run.status === "failed" || run.status === "aborted") {
+      const reason = this.events
+        .list(taskId, 20)
+        .find((event) => event.kind === "error")?.summary;
+      return this.failRun(
+        taskId,
+        run,
+        reason ?? "本轮执行中断，可在任务中发送新的消息重试。",
+      );
+    }
+    if (run.status !== "completed") return false;
+
+    const inputs = this.store.db
+      .prepare(
+        "SELECT t.source, t.external_id FROM inbox i JOIN triggers t ON t.id = i.trigger_id WHERE i.run_id = ?",
+      )
+      .all(run.id);
+    const priorAttempts = inputs.map((row) =>
+      row.source === "system"
+        ? Number(
+            /^worker-result:run_[a-zA-Z0-9]+:(\d+)$/.exec(
+              String(row.external_id),
+            )?.[1] ?? 0,
+          )
+        : 0,
+    );
+    const attempt = inputs.some((row) => row.source !== "system")
+      ? 1
+      : Math.max(0, ...priorAttempts) + 1;
+    if (attempt > MAX_RESULT_FOLLOWUPS)
+      return this.failRun(
+        taskId,
+        run,
+        "模型在两次自动提醒后仍未提交任务结果，已停止执行。可重试或更换模型。",
+      );
+
+    const externalId = `worker-result:${run.id}:${attempt}`;
+    this.store.transaction(() => {
+      const trigger =
+        this.store.triggers.findByExternal("system", externalId) ??
+        this.store.triggers.insert({
+          source: "system",
+          externalId,
+          threadId: null,
+          actorId: "system",
+          payloadRef: `run:${run.id}`,
+          preview: `Your previous Run ended without submitting a Task result. This is automatic follow-up ${attempt}/${MAX_RESULT_FOLLOWUPS}. Continue the original goal using the existing workspace and conversation; do not repeat completed side effects. If the work is finished, call the cli tool now with _submit_result --outcome completed --notice 'Short user-facing outcome' --summary 'Your full findings and evidence'. A prose answer alone does not finish the Task. Use needs_input only if you need a specific answer from the user, and include the question in notice and summary. Use failed if you cannot proceed. Reply in the user's language.`,
+          status: "routed",
+        });
+      this.store.inbox.insertOrGet({ target: taskId, triggerId: trigger.id });
+      if (task.status === "waiting" || task.status === "pending")
+        this.store.tasks.transition(taskId, task.status, "active");
+    });
+    this.events.emit({
+      scope: taskId,
+      kind: "continuation",
+      summary: `任务尚未提交结果，自动继续收尾（${attempt}/${MAX_RESULT_FOLLOWUPS}）`,
+      payload: { runId: run.id, attempt },
+    });
+    return true;
   }
 
   notifyOperationComplete(operationId: string): void {
@@ -164,7 +279,7 @@ function buildWorkerPrompt(systemPrompt: string, skills: string[]): string {
     skills.length === 0
       ? ""
       : `\n\nAvailable skills (use _skill through cli, or read the snapshot files listed by Pizza):\n${skills.map((s) => `- ${s}`).join("\n")}`;
-  return `${systemPrompt}\n\nTool interface: the only model tool is Pizza native cli. Use _read/_write/_edit for file operations, _skill list/load/read for skills, and authorized shell commands for execution. cli.timeout is in milliseconds and commands wait for completion. Submit results with _submit_result --outcome completed --notice TEXT --summary TEXT; choose failed or needs_input when appropriate. Quote text values. Run _submit_result --help for JSON/heredoc input. It is always available.${skillLines}`;
+  return `${systemPrompt}\n\nTool interface: the only model tool is Pizza native cli. Use _read/_write/_edit for file operations, _skill list/load/read for skills, and authorized shell commands for execution. cli.timeout is in milliseconds and commands wait for completion. Submit results with _submit_result --outcome completed --notice TEXT --summary TEXT; choose failed or needs_input when appropriate. A prose answer does not finish the Task: invoke _submit_result through cli before ending your turn. Use needs_input only for a concrete question that requires a user answer. Quote text values. Run _submit_result --help for JSON/heredoc input. It is always available.${skillLines}`;
 }
 
 function formatWorkerBatch(

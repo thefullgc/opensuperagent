@@ -165,8 +165,11 @@ export class App {
     this.workerLoop = new WorkerLoop(
       this.store,
       this.sessions,
+      this.workerControls,
+      this.events,
       config.instance.max_active_tasks,
       this.paths,
+      (message) => this.settings.redact(message),
     );
     this.watchdogLoop = new WatchdogLoop(
       this.store,

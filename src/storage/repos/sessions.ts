@@ -88,6 +88,13 @@ export class RunRepo {
     return r ? mapRun(r) : null;
   }
 
+  latest(sessionId: string): Run | null {
+    const result = row<RunDbRow>(this.db.prepare(
+      "SELECT * FROM runs WHERE session_id = ? ORDER BY rowid DESC LIMIT 1",
+    ).get(sessionId));
+    return result ? mapRun(result) : null;
+  }
+
   create(sessionId: string): Run {
     const id = newId("run");
     const now = nowIso();

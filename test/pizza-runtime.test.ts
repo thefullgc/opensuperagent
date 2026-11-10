@@ -106,7 +106,11 @@ it("reconciles a completed Pizza receipt without replaying a model request", asy
     await h.app.sessions.closeAll();
     await h.app.sessions.recoverIncomplete();
     assert.equal(h.app.store.runs.get(String(run.id))!.status, "completed");
-    assert.equal(h.app.store.inbox.listPending(id).length, 0);
+    // The text-only turn queued a result follow-up, not a replay of its original input.
+    const followups = h.app.store.inbox.listPending(id);
+    assert.equal(followups.length, 1);
+    assert.equal(h.app.store.triggers.get(followups[0]!.triggerId)!.externalId, `worker-result:${String(run.id)}:1`);
+    assert.equal(h.app.store.inbox.listAccepted(String(run.id)).length, 0);
     assert.equal(h.requests.length, 1);
   } finally {
     await h.close();

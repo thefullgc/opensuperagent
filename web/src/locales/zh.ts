@@ -356,7 +356,7 @@ export const zh: Record<string, string> = {
   "overview.liveStatus": "实时状态",
   "overview.recentTasks": "最近任务",
   "overview.recentTasksMeta": "{{v0}} 个目标",
-  "overview.statOpen": "进行中的任务",
+  "overview.statOpen": "未完成任务",
   "overview.statOpenDetail": "{{v0}} 个正在执行",
   "overview.statRuns": "累计执行回合",
   "overview.statRunsDetail": "{{v0}} 个目标已完成",
