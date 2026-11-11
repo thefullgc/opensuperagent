@@ -1,10 +1,8 @@
 import { parseArgs } from "node:util";
-import type { BashToolOptions } from "@tomsun28/pizza";
+import type { CliCommandDefinition } from "@tomsun28/pizza/sdk";
 import type { WorkerControls } from "./controls.js";
 import type { SubmitOutcome } from "../types.js";
 import { validateToolArguments } from "../llm/tool-validation.js";
-
-export type CliBuiltinCommand = ReturnType<NonNullable<BashToolOptions["dynamicBuiltins"]>>[number];
 
 const RESULT_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -57,8 +55,7 @@ export function submitResultCommand(input: {
   taskId: string;
   sessionId: string;
   runId: () => string;
-  sourceInfo: CliBuiltinCommand["sourceInfo"];
-}): CliBuiltinCommand {
+}): CliCommandDefinition<Record<string, unknown>> {
   return {
     name: "_submit_result",
     description: "Submit this Task's result and notify its user.",
@@ -68,7 +65,6 @@ export function submitResultCommand(input: {
       "Or: _submit_result --json <<'RESULT'\n{\"outcome\":\"completed\",\"notice\":\"Done\",\"summary\":\"Verified\",\"artifacts\":[]}\nRESULT",
       "Completed requires no running server operation and no pending input. Task, session and Run IDs are supplied by the system.",
     ].join("\n"),
-    sourceInfo: input.sourceInfo,
     parseArguments: parseResult,
     async execute(toolCallId, params, signal) {
       signal?.throwIfAborted();

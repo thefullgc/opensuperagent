@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import type { ToolDefinition } from "@tomsun28/pizza";
+import type { CliToolDetails, CliToolInput, ToolDefinition, ToolsOptionEntry } from "@tomsun28/pizza";
 import type { EventEmitter } from "node:events";
 import { dirname, join } from "node:path";
 import type { Store } from "../storage/index.js";
@@ -16,8 +16,9 @@ import {
   executeRouterTool,
 } from "../llm/tools-router.js";
 import { submitResultCommand } from "../worker/commands.js";
+import { validateWorkerTools } from "../worker/definition.js";
 import { validateToolArguments } from "../llm/tool-validation.js";
-import { nativeWorkerTools } from "./native-worker-tools.js";
+import { workerCliGuard } from "./native-worker-tools.js";
 
 type Pizza = typeof import("@tomsun28/pizza");
 let sdk: Promise<Pizza> | undefined;
@@ -51,7 +52,7 @@ type EventStoreLike = {
 const ROUTER_MAX_CALLS = 16;
 const WORKER_MAX_CALLS = 40;
 
-// Pizza 0.5.1 releases its advisory lock file but leaves its four process
+// Pizza releases its advisory lock file but leaves its four process
 // listeners registered. Remove those exact callbacks when the facade closes.
 // Serialize setup so concurrent sessions cannot capture each other's hooks.
 let sessionSetup: Promise<unknown> = Promise.resolve();
@@ -129,6 +130,14 @@ export function createPizzaFacadeFactory(deps: {
     if (!isAgent && !task) {
       throw new Error(`Worker session ${owner} has no task`);
     }
+    const workDir = cwd ?? task?.workspacePath ?? deps.paths.root;
+    const definition = task?.definition;
+    if (definition) validateWorkerTools(definition);
+    const allowShell = definition?.cli?.allowShell ?? false;
+    const skills = task
+      ? pizza.loadSkillsFromDir({ dir: deps.paths.taskSkills(owner), source: "task" })
+      : { skills: [], diagnostics: [] };
+    const checkCli = task ? workerCliGuard(workDir, skills.skills, allowShell) : undefined;
 
     const agentDir = join(dirname(session.eventsPath), "agent");
     mkdirSync(agentDir, { recursive: true });
@@ -177,6 +186,10 @@ export function createPizzaFacadeFactory(deps: {
     let yielded = false;
     let toolTail: Promise<unknown> = Promise.resolve();
     let facade: Awaited<ReturnType<Pizza["createSessionFacade"]>>["facade"];
+    let aborted = false;
+    let llmCalls = 0;
+    let overBudget = false;
+    const maxCalls = isAgent ? ROUTER_MAX_CALLS : WORKER_MAX_CALLS;
     const controlTools: ToolDefinition[] = chatTools.map((tool) => ({
       name: tool.function.name,
       label: tool.function.name,
@@ -199,36 +212,37 @@ export function createPizzaFacadeFactory(deps: {
         };
       },
     }));
-    const nativeTools = isAgent ? [] : nativeWorkerTools(
-      pizza, task!.definition, cwd ?? task!.workspacePath, deps.paths.taskSkills(owner),
-      [submitResultCommand({
+    const tools: ToolsOptionEntry[] = definition ? [
+      ...definition.tools,
+      ...(allowShell ? ["shell" as const] : []),
+      pizza.defineCliCommand(submitResultCommand({
         controls: deps.workerControls,
         taskId: owner,
         sessionId: session.id,
         runId: () => activeRunId,
-        sourceInfo: pizza.createSyntheticSourceInfo("<opensuperagent:task>", { source: "sdk" }),
-      })],
-    );
-    const customTools: ToolDefinition[] = [...nativeTools, ...controlTools].map((tool) => ({
-      ...tool,
-      execute: (...args) => {
+      })),
+    ] : [];
+
+    function guardTool(tool: ToolDefinition, beforeExecute?: (...args: Parameters<ToolDefinition["execute"]>) => void) {
+      const execute = tool.execute;
+      tool.execute = (...args) => {
         const runId = activeRunId;
         // Serialize tool batches within a Run; implementation and result format
         // for CLI/file/skill operations belong entirely to Pizza.
         const execution = toolTail.then(async () => {
           args[2]?.throwIfAborted();
           if (runId !== activeRunId) throw new Error("Tool belongs to an earlier Run");
-          if (!runId || deps.store.runs.get(runId)?.status !== "submitted")
+          if (!runId || yielded || deps.store.runs.get(runId)?.status !== "submitted")
             throw new Error("Run is no longer active");
           if (!isAgent && deps.store.tasks.isTerminal(deps.store.tasks.get(owner)!.status))
             throw new Error("Task is closed");
           const invalid = validateToolArguments(args[1], tool.parameters);
           if (invalid) throw new Error(`Invalid tool arguments: ${invalid}`);
-          const result = await tool.execute(...args);
-          const builtin = (result.details as {
-            builtin?: { name?: string; details?: { result?: { ok?: boolean } } };
-          } | undefined)?.builtin;
-          const submitted = builtin?.name === "_submit_result" && builtin.details?.result?.ok;
+          beforeExecute?.(...args);
+          const result = await execute(...args);
+          const command = (result.details as CliToolDetails | undefined)?.command;
+          const submitted = command?.name === "_submit_result" &&
+            (command.details as { result?: { ok?: boolean } } | undefined)?.result?.ok;
           if (!isAgent && (submitted || deps.store.tasks.isTerminal(deps.store.tasks.get(owner)!.status))) {
             yielded = true;
             facade.abort();
@@ -241,11 +255,12 @@ export function createPizzaFacadeFactory(deps: {
         });
         toolTail = execution.catch(() => undefined);
         return execution;
-      },
-    }));
+      };
+    }
+    controlTools.forEach((tool) => guardTool(tool));
 
     const created = await createSessionWithCleanup(pizza, {
-      cwd: cwd ?? deps.paths.root,
+      cwd: workDir,
       agentDir,
       storagePath: session.eventsPath,
       workspaceId: "opensuperagent",
@@ -258,9 +273,7 @@ export function createPizzaFacadeFactory(deps: {
         noExtensions: true,
         noBuiltinExtensions: true,
         noSkills: true,
-        skillsOverride: () => isAgent
-          ? { skills: [], diagnostics: [] }
-          : pizza.loadSkillsFromDir({ dir: deps.paths.taskSkills(owner), source: "task" }),
+        skillsOverride: () => skills,
         noBuiltinSkills: true,
         noPromptTemplates: true,
         noThemes: true,
@@ -268,13 +281,26 @@ export function createPizzaFacadeFactory(deps: {
       },
       model,
       thinkingLevel: "off",
-      tools: customTools.map((tool) => tool.name),
-      customTools,
+      tools,
+      customTools: controlTools,
       safeModeDefault: false,
       approvalUi: false,
       isMainAgent: false,
     });
     facade = created.facade;
+    if (checkCli) {
+      const cli = facade.getToolDefinition("cli");
+      if (!cli?.resolve) {
+        await facade.disposeAsync();
+        throw new Error("Pizza Worker CLI is unavailable");
+      }
+      const resolve = cli.resolve;
+      guardTool(cli, (id, input) => {
+        // Re-resolve through Pizza inside the queue, after earlier tools have
+        // finished. The CLI uses this same parsed command for execution.
+        checkCli((input as CliToolInput).command, resolve(input, id)?.command);
+      });
+    }
     const eventStore = created.runtime.store as unknown as EventStoreLike;
 
     // Route appends through TaggingStore so each run's first USER_MESSAGE
@@ -293,11 +319,6 @@ export function createPizzaFacadeFactory(deps: {
       await facade.disposeAsync();
       throw new Error("Pizza event store cannot be tagged", { cause: error });
     }
-
-    let aborted = false;
-    let llmCalls = 0;
-    let overBudget = false;
-    const maxCalls = isAgent ? ROUTER_MAX_CALLS : WORKER_MAX_CALLS;
 
     facade.subscribe((event) => {
       const payload =
@@ -515,9 +536,9 @@ function thisRunStatus(status?: string): string {
 }
 
 function toolResult(payload: Record<string, unknown>): unknown {
-  const details = payload.details as {
+  const details = payload.details as (CliToolDetails & {
     result?: unknown;
-    builtin?: { details?: { result?: unknown } };
-  } | undefined;
-  return details?.result ?? details?.builtin?.details?.result ?? payload.result;
+  }) | undefined;
+  const commandDetails = details?.command?.details as { result?: unknown } | undefined;
+  return details?.result ?? commandDetails?.result ?? payload.result;
 }

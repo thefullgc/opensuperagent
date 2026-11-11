@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import type { Store } from "../../src/storage/index.js";
 import { rows, row } from "../../src/storage/db.js";
 import type { RouterTools } from "../../src/router/tools.js";
@@ -9,8 +11,10 @@ import type {
   FacadeFactory,
   SessionFacadeHandle,
 } from "../../src/session/manager.js";
-import { createWriteTool, createBashTool, loadSkillsFromDir } from "@tomsun28/pizza";
+import { loadSkillsFromDir } from "@tomsun28/pizza";
 import { newId, nowIso } from "../../src/ids.js";
+
+const runFile = promisify(execFile);
 
 /**
  * fixture agent runtime without Pizza LLM.
@@ -188,14 +192,12 @@ async function runWorkerTurn(
     "",
   ].join("\n");
 
-  const writeObj = await createWriteTool(workspace).execute(
-    "fixture-write", { path: "OBJECTIVE.md", content: objectiveBlock }, undefined,
-  );
+  writeFileSync(join(workspace, "OBJECTIVE.md"), objectiveBlock);
   deps.events.emit({
     scope: taskId,
     kind: "tool",
     summary: "write OBJECTIVE.md",
-    payload: { tool: "write", result: writeObj },
+    payload: { tool: "write", path: "OBJECTIVE.md" },
   });
 
   const notesPath = join(workspace, "NOTES.md");
@@ -222,9 +224,7 @@ async function runWorkerTurn(
     payload: { tool: "write", path: "NOTES.md" },
   });
 
-  const execResult = await createBashTool(workspace).execute(
-    "fixture-cli", { command: "pwd && date && ls -la", timeout: 30000 }, undefined,
-  );
+  const execResult = await runFile("sh", ["-c", "pwd && date && ls -la"], { cwd: workspace, timeout: 30000 });
   deps.events.emit({
     scope: taskId,
     kind: "tool",

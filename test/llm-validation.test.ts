@@ -31,7 +31,7 @@ it("Pizza rejects malformed submissions before side effects and accepts a valid 
       .list(id)
       .filter((e) => e.kind === "tool_result");
     assert.equal(
-      results.filter((e) => !(e.payload as any)?.details?.builtin).length,
+      results.filter((e) => !(e.payload as any)?.details?.command).length,
       invalid.length,
     );
     assert.equal(h.requests.length, invalid.length + 1);
@@ -70,10 +70,10 @@ it("dispatches _submit_result help and flags through CLI without granting ordina
     assert.deepEqual(h.app.store.tasks.get(id)!.result?.artifacts, ["report.txt", "other file.txt"]);
     assert.equal(round, 3);
     const output = h.app.events.list(id).find((event) =>
-      (event.payload as any)?.details?.builtin?.name === "_submit_result",
+      (event.payload as any)?.details?.command?.name === "_submit_result",
     )!;
     assert.equal((output.payload as any).result.ok, true);
-    assert.equal((output.payload as any).details.builtin.details.result.ok, true);
+    assert.equal((output.payload as any).details.command.details.result.ok, true);
   } finally { await h.close(); }
 });
 

@@ -24,6 +24,7 @@ const tarball = resolve(
 );
 const root = mkdtempSync(join(tmpdir(), "osa-npm-package-"));
 const prefix = join(root, "prefix");
+const pizzaPackage = "@tomsun28/pizza";
 const env = { ...process.env, OPENSUPERAGENT_DATA_ROOT: join(root, "data") };
 delete env.DEEPSEEK_API_KEY;
 delete env.OPENSUPERAGENT_CONFIG;
@@ -52,6 +53,7 @@ try {
   ]);
   const installed = join(prefix, "lib/node_modules/opensuperagent");
   const bin = join(prefix, "bin/opensuperagent");
+  const sdkDir = join(installed, "node_modules", pizzaPackage);
   const manifest = JSON.parse(
     readFileSync(join(installed, "package.json"), "utf8"),
   );
@@ -63,8 +65,11 @@ try {
   assert.match(readFileSync(join(installed, "README.md"), "utf8"), /开源落地实现/);
   assert.ok(existsSync(join(installed, "README.en.md")));
   assert.ok(existsSync(join(installed, "resource/flow.png")));
-  assert.equal(manifest.dependencies["@tomsun28/pizza"], "0.5.1");
-  assert.ok(!manifest.optionalDependencies?.["@tomsun28/pizza"]);
+  const sdkVersion = project.dependencies[pizzaPackage];
+  assert.match(sdkVersion, /^\d+\.\d+\.\d+$/);
+  assert.equal(manifest.dependencies[pizzaPackage], sdkVersion);
+  assert.ok(!manifest.optionalDependencies?.[pizzaPackage]);
+  assert.equal(JSON.parse(readFileSync(join(sdkDir, "package.json"), "utf8")).version, sdkVersion);
   for (const file of [
     "session/llm-agent.js",
     "session/mvp-agent.js",
@@ -183,10 +188,6 @@ try {
   app = undefined;
 
   // Removing the required SDK must fail before the HTTP server opens.
-  const sdkDir = join(
-    prefix,
-    "lib/node_modules/opensuperagent/node_modules/@tomsun28/pizza",
-  );
   renameSync(sdkDir, sdkDir + "-missing");
   const missing = spawnSync(bin, ["serve", "--config", configPath], {
     cwd: root,
