@@ -1,11 +1,16 @@
 import type { WorkerDefinitionSpec } from "../types.js";
+import type { BuiltinCommand } from "@tomsun28/pizza";
 
-export const NATIVE_WORKER_COMMANDS = new Set([
+const workerCommands = [
   "_read", "_write", "_edit", "_skill",
-]);
+] as const satisfies readonly BuiltinCommand[];
+
+export const NATIVE_WORKER_COMMANDS: ReadonlySet<string> = new Set(workerCommands);
 
 /** Validate command permissions without rewriting definitions or snapshots. */
-export function validateWorkerTools(spec: WorkerDefinitionSpec): void {
+export function validateWorkerTools(
+  spec: WorkerDefinitionSpec,
+): asserts spec is WorkerDefinitionSpec & { tools: (typeof workerCommands)[number][] } {
   if (!Array.isArray(spec.tools) || !spec.tools.every((name) => typeof name === "string"))
     throw new Error(`Worker ${spec.id}: tools must be an array of allowed CLI commands`);
   const unsupported = spec.tools.filter((name) =>

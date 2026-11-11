@@ -63,8 +63,8 @@ async function main() {
   let peakActiveWorkers = 0;
   app.events.on((event) => {
     const payload = event.payload as any;
-    if (event.kind === "tool_result" && payload.details?.builtin?.name === "skill")
-      skillCalls.push({ taskId: event.scope, ...payload.details.builtin.args });
+    if (event.kind === "tool_result" && payload?.details?.command?.name === "_skill")
+      skillCalls.push({ taskId: event.scope, ...payload.details.command.args });
     if (
       event.kind === "tool_result" &&
       event.summary.startsWith("start_task →") &&

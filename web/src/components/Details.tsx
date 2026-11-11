@@ -132,12 +132,12 @@ export function DetailPanel({
     const payload = (event.payload ?? {}) as {
       isError?: boolean;
       args?: { action?: string; name?: string; path?: string };
-      details?: { builtin?: { name?: string; args?: { action?: string; name?: string; file?: string } } };
+      details?: { command?: { name?: string; args?: { action?: string; name?: string; file?: string } } };
     };
-    const builtin = payload.details?.builtin;
-    if (event.kind === "tool_result" && builtin?.name === "skill" && !payload.isError &&
-        ["load", "read"].includes(builtin.args?.action ?? "")) {
-      return [{ event, name: builtin.args?.name, path: builtin.args?.file }];
+    const command = payload.details?.command;
+    if (event.kind === "tool_result" && command?.name === "_skill" && !payload.isError &&
+        ["load", "read"].includes(command.args?.action ?? "")) {
+      return [{ event, name: command.args?.name, path: command.args?.file }];
     }
     // Keep historical journal entries visible after upgrading the tool surface.
     if (event.kind === "tool" && event.summary === "skill" && payload.args?.action !== "list") {

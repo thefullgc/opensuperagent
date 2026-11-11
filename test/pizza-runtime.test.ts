@@ -28,7 +28,7 @@ it("uses the actual Pizza SDK with persistent run receipts and complete tool tel
       .find((e) => e.kind === "tool" && e.summary === "cli");
     assert.equal((tool?.payload as any)?.args?.command, "_skill load --name test-driven-fix");
     const result = h.app.events.list(id).find((e) => e.kind === "tool_result");
-    assert.equal((result?.payload as any)?.details?.builtin?.name, "skill");
+    assert.equal((result?.payload as any)?.details?.command?.name, "_skill");
     assert.match(JSON.stringify((result?.payload as any)?.result), /test-driven-fix/);
     const session = h.app.store.sessions.getByOwner(id)!;
     const db = new DatabaseSync(session.eventsPath, { readOnly: true });
@@ -409,19 +409,19 @@ it("serializes parallel tools within a Task while keeping every real command res
   );
   try {
     const id = h.task();
-    await h.app.workerLoop.tick(id);
-    const commands = h.app.events
-      .list(id)
-      .filter(
-        (event) =>
-          event.kind === "tool_result" && event.summary.startsWith("cli →") &&
-          (event.payload as any).details?.builtin?.name !== "_submit_result",
-      )
-      .map((event) => (event.payload as any).result);
-    assert.equal(commands.length, 2);
-    assert.deepEqual(commands.map((result) => result.map((block: any) => block.text).join("\n")).sort(), [
-      "FIRST", "SECOND",
-    ]);
+    const output: string[] = [];
+    const unsubscribe = h.app.events.on((event) => {
+      if (event.scope !== id || event.kind !== "tool_result") return;
+      const payload = event.payload as any;
+      if (payload.toolCallId === "parallel-one" || payload.toolCallId === "parallel-two")
+        output.push(payload.result.map((block: any) => block.text).join("\n"));
+    });
+    try {
+      await h.app.workerLoop.tick(id);
+    } finally {
+      unsubscribe();
+    }
+    assert.deepEqual(output, ["FIRST", "SECOND"]);
     assert.equal(h.app.store.tasks.get(id)!.status, "completed");
   } finally {
     await h.close();
