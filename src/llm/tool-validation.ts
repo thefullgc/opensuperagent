@@ -38,6 +38,11 @@ export function validateToolArguments(
       );
       if (error) return error;
     }
+  } else if (type === "integer") {
+    // Pizza 0.5.6 types cli.timeout as an integer. JSON Schema "integer" is
+    // still a JS number; rejecting it would block every timed shell command.
+    if (typeof value !== "number" || !Number.isInteger(value))
+      return `${path} must be an integer`;
   } else if (
     type &&
     (typeof value !== type || (type === "number" && !Number.isFinite(value)))

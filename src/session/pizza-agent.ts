@@ -52,9 +52,31 @@ type EventStoreLike = {
 const ROUTER_MAX_CALLS = 16;
 const WORKER_MAX_CALLS = 40;
 
-// Pizza releases its advisory lock file but leaves its four process
-// listeners registered. Remove those exact callbacks when the facade closes.
-// Serialize setup so concurrent sessions cannot capture each other's hooks.
+function pizzaSessionSettings(pizza: Pizza) {
+  const settings = pizza.SettingsManager.inMemory();
+  settings.applyOverrides({ gitCommitCoAuthor: false });
+  return settings;
+}
+
+function isPizzaLockListener(listener: Function): boolean {
+  const source = String(listener);
+  if (
+    ["onSignal", "onExit"].includes(listener.name) &&
+    /release\(\)/.test(source)
+  )
+    return true;
+  return (
+    listener.name === "release" &&
+    /process\.off\("exit", release\)/.test(source)
+  );
+}
+
+// Pizza's workspace lock registers four process listeners (exit, SIGINT,
+// SIGTERM, SIGHUP). 0.5.2 left the old onSignal/onExit callbacks in place
+// after releasing the lock file; 0.5.6 registers the lock's own `release`
+// function and usually detaches it on dispose. Remove either shape so a
+// short-lived session cannot accumulate handlers. Serialize setup so
+// concurrent sessions cannot capture each other's hooks.
 let sessionSetup: Promise<unknown> = Promise.resolve();
 function createSessionWithCleanup(
   pizza: Pizza,
@@ -76,8 +98,7 @@ function createSessionWithCleanup(
           .filter(
             (listener) =>
               !before.get(signal)!.has(listener) &&
-              ["onSignal", "onExit"].includes(listener.name) &&
-              /release\(\)/.test(String(listener)),
+              isPizzaLockListener(listener),
           )
           .map((listener) => ({ signal, listener })),
       );
@@ -267,7 +288,12 @@ export function createPizzaFacadeFactory(deps: {
       threadId: session.id,
       authStorage: auth,
       modelRegistry: registry,
-      settingsManager: pizza.SettingsManager.inMemory({}),
+      // 0.5.5 defaults gitCommitCoAuthor to true and appends a Co-Authored-By
+      // trailer to `git commit`. inMemory({ gitCommitCoAuthor: false }) does
+      // not survive createSessionFacade: it reloads settings from storage, and
+      // the in-memory constructor value was never written there, so the
+      // default comes back. Overrides are reapplied after that reload.
+      settingsManager: pizzaSessionSettings(pizza),
       resourceLoaderOptions: {
         systemPrompt: systemPrompt ?? "",
         noExtensions: true,

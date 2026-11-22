@@ -21,7 +21,14 @@ it("exposes only Pizza's native CLI schema for all snapshotted Worker command li
       assert.deepEqual(schema.required, ["command"]);
       assert.deepEqual(Object.keys(schema.properties).sort(), ["command", "timeout"]);
       assert.equal(schema.properties.command.type, "string");
-      assert.equal(schema.properties.timeout.type, "number");
+      assert.equal(schema.properties.timeout.type, "integer");
+      assert.match(JSON.stringify(h.requests.at(-1)), /stopped after 10 minutes/);
+      if (definition.cli?.allowShell) {
+        assert.match(sent[0].function.description, /10 minutes/);
+        assert.match(sent[0].function.description, /0 to disable/);
+      } else {
+        assert.doesNotMatch(sent[0].function.description, /10 minutes/);
+      }
       await h.app.sessions.closeAll();
     }
   } finally { await h.close(); }
@@ -140,6 +147,60 @@ it("loads only immutable Task skill snapshots through Pizza's native skill comma
     assert.match(returned, /test-driven-fix/);
     assert.ok(!returned.includes("MUTATED_CATALOG"));
     assert.match(returned, /not found/i);
+  } finally { await h.close(); }
+});
+
+it("keeps git commits free of Pizza's co-author trailer", async () => {
+  let round = 0;
+  const h = await pizzaHarness(() => ++round === 1 ? {
+    calls: [cli("git init -q && git add note.txt && git -c user.name=Dev -c user.email=dev@example.com -c commit.gpgsign=false commit -m 'record note'")],
+  } : {
+    calls: [submitResultCall({
+      outcome: "completed", notice: "Committed", summary: "Commit text was left unchanged",
+    })],
+  });
+  try {
+    const { execFileSync } = await import("node:child_process");
+    const { writeFileSync } = await import("node:fs");
+    const id = h.task();
+    const workspace = h.app.paths.workspace(id);
+    writeFileSync(join(workspace, "note.txt"), "hello\n");
+    await h.app.workerLoop.tick(id);
+    const message = execFileSync("git", ["log", "-1", "--format=%B"], {
+      cwd: workspace,
+      encoding: "utf8",
+    });
+    assert.match(message, /record note/);
+    assert.doesNotMatch(message, /Co-Authored-By/i);
+    assert.equal(h.app.store.tasks.get(id)!.status, "completed");
+  } finally { await h.close(); }
+});
+
+it("honors an explicit shell timeout and timeout 0 without changing underscore commands", async () => {
+  let round = 0;
+  const h = await pizzaHarness(() => ++round === 1 ? {
+    calls: [
+      { name: "cli", args: { command: "printf UNBOUNDED", timeout: 0 } },
+      { name: "cli", args: { command: "_write kept.txt --content kept", timeout: 50 } },
+      { name: "cli", args: { command: "sleep 2; printf LATE", timeout: 200 } },
+    ],
+  } : {
+    calls: [submitResultCall({
+      outcome: "completed", notice: "Timeouts checked", summary: "Explicit shell timeouts were honored",
+    })],
+  });
+  try {
+    const id = h.task();
+    await h.app.workerLoop.tick(id);
+    const payloads = results(h, id).map((event) => event.payload as any);
+    const unbounded = payloads.find((payload) => payload.result?.[0]?.text === "UNBOUNDED");
+    assert.equal(unbounded.isError, false);
+    assert.equal(readFileSync(join(h.app.paths.workspace(id), "kept.txt"), "utf8"), "kept");
+    const limited = payloads.find((payload) => JSON.stringify(payload.result).includes("200ms"));
+    assert.equal(limited.isError, true);
+    assert.match(JSON.stringify(limited.result), /timed out after 200ms/);
+    assert.ok(!JSON.stringify(limited.result).includes("LATE"));
+    assert.equal(h.app.store.tasks.get(id)!.status, "completed");
   } finally { await h.close(); }
 });
 
