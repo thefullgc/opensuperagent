@@ -1,6 +1,10 @@
 import { t as tr, getLocale, translate } from "../i18n";
 import type { TaskStatus, Source } from "../api";
 export function sourceStatus(source: Source) {
+  if (source.poll) {
+    if (source.poll.error) return tr("adapter.pollFailed");
+    return source.poll.lastSuccess ? tr("adapter.pollActive") : tr("adapter.pollStarting");
+  }
   if (source.id === "feishu" && source.receiveMode === "websocket") {
     const states: Record<string, string> = {
       connected: tr("source.wsConnected"),

@@ -35,6 +35,10 @@ export class ConsoleView {
         .all(),
     );
     const feishu = this.app.feishuConnection.snapshot();
+    const github = this.app.settings.adapters.github;
+    const poll = this.app.githubPolling.snapshot();
+    const polling = github.enabled && github.receiveMode === "polling";
+    const pollTransport = poll.error ? "failed" : poll.lastSuccess ? "available" : "connecting";
     const sources = [
       ...new Set([
         "console",
@@ -55,7 +59,9 @@ export class ConsoleView {
             : config.sources.some((s) => s.source === id)),
         // A source allowlist does not mean a transport adapter is connected.
         transport:
-          id === "feishu" && feishu.enabled && feishu.mode === "websocket"
+          id === "github" && polling
+            ? pollTransport
+            : id === "feishu" && feishu.enabled && feishu.mode === "websocket"
             ? feishu.state === "connected"
               ? "available"
               : feishu.state
@@ -65,6 +71,8 @@ export class ConsoleView {
               ? "available"
               : "disabled",
         implemented: ["console", "github", "feishu", "webhook"].includes(id),
+        ...(id === "github" ? { receiveMode: github.receiveMode } : {}),
+        ...(id === "github" && polling ? { poll } : {}),
         ...(id === "feishu"
           ? { receiveMode: feishu.mode, connectionState: feishu.state }
           : {}),

@@ -21,6 +21,7 @@ import { EventBus } from "./events/bus.js";
 import { loadLlmConfig } from "./llm/index.js";
 import { SettingsStore } from "./settings/store.js";
 import { Adapters } from "./channels/adapters/index.js";
+import { GithubPolling } from "./channels/github-polling.js";
 import { FeishuConnection } from "./channels/feishu-connection.js";
 import type { IngressInput } from "./types.js";
 import type { LlmConfig } from "./llm/types.js";
@@ -61,6 +62,7 @@ export class App {
   readonly supervisor: Supervisor;
   readonly settings: SettingsStore;
   readonly adapters: Adapters;
+  readonly githubPolling: GithubPolling;
   readonly feishuConnection: FeishuConnection;
   private readonly hasTestFacade: boolean;
   get engineMode(): "pizza" {
@@ -183,6 +185,12 @@ export class App {
       config,
       this.sessions,
     );
+    this.githubPolling = new GithubPolling(
+      this.settings,
+      this.store,
+      this.adapters.github,
+      (input) => this.submitExternal(input),
+    );
     this.feishuConnection = new FeishuConnection(
       this.settings,
       this.adapters.feishu,
@@ -226,6 +234,7 @@ export class App {
     await this.delivery.flushPending();
 
     this.supervisor.start();
+    this.githubPolling.reconcile();
     this.feishuConnection.reconcile();
     this.pumpTimer = setInterval(() => {
       void this.pump();
@@ -247,6 +256,7 @@ export class App {
       this.pumpTimer = null;
     }
     this.stopping = true;
+    this.githubPolling.stop();
     this.feishuConnection.stop();
     this.supervisor.stop();
     await this.sessions.closeAll();

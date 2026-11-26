@@ -58,7 +58,8 @@ export interface Source {
   id: string;
   configured: boolean;
   transport: string;
-  receiveMode?: "websocket" | "webhook";
+  receiveMode?: "websocket" | "webhook" | "polling";
+  poll?: { lastSuccess: string | null; error: string | null };
   connectionState?: string;
   implemented?: boolean;
   count: number;

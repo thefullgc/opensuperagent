@@ -299,5 +299,12 @@ WHERE owner_task_id IS NULL
   );
 `,
   },
-
+  {
+    version: 7,
+    name: "007_github_poll_cursors",
+    sql: `CREATE TABLE github_poll_cursors (
+      api_url TEXT NOT NULL, repo TEXT NOT NULL, since TEXT NOT NULL,
+      last_id INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (api_url, repo)
+    );`,
+  },
 ];

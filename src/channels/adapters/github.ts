@@ -5,6 +5,14 @@ import type { IngressInput, Delivery } from "../../types.js";
 import { fetchJson, HttpError, parseBody, verifyHmac } from "../http.js";
 import type { DeliveryChannel } from "../../delivery/index.js";
 
+export interface GithubComment {
+  id: number;
+  issue_url: string;
+  created_at: string;
+  body: string;
+  user: { login: string; type?: string } | null;
+}
+
 export class GithubAdapter implements DeliveryChannel {
   readonly name = "github";
   isEnabled() {
@@ -20,6 +28,8 @@ export class GithubAdapter implements DeliveryChannel {
   ): IngressInput | { ignored: string } {
     const config = this.settings.adapters.github;
     if (!config.enabled) throw new HttpError(503, "GitHub adapter is disabled");
+    if (config.receiveMode !== "webhook")
+      throw new HttpError(409, "GitHub is in polling mode");
     verifyHmac(
       config.webhookSecret,
       raw,
@@ -30,6 +40,33 @@ export class GithubAdapter implements DeliveryChannel {
     const delivery = String(headers["x-github-delivery"] ?? "");
     if (!delivery) throw new HttpError(400, "Missing GitHub delivery ID");
     if (event === "ping") return { ignored: "GitHub ping acknowledged" };
+    return this.normalize(body, event, delivery);
+  }
+
+  receiveComment(repo: string, number: number, comment: GithubComment) {
+    const config = this.settings.adapters.github;
+    if (!config.enabled || config.receiveMode !== "polling")
+      throw new Error("GitHub polling is disabled");
+    const body = {
+      repository: { full_name: repo },
+      issue: { number },
+      sender: comment.user,
+      action: "created",
+      comment,
+    };
+    return this.normalize(
+      body,
+      "issue_comment",
+      `comment:${config.apiBaseUrl}:${repo.toLowerCase()}:${comment.id}`,
+    );
+  }
+
+  private normalize(
+    body: ReturnType<typeof parseBody>,
+    event: string,
+    delivery: string,
+  ): IngressInput | { ignored: string } {
+    const config = this.settings.adapters.github;
     const repo = String(body.repository?.full_name ?? "");
     const actor = String(body.sender?.login ?? "");
     if (
@@ -37,8 +74,11 @@ export class GithubAdapter implements DeliveryChannel {
       !/^[\w.-]+\/[\w.-]+$/.test(repo)
     )
       throw new HttpError(403, "Repository is outside the allowlist");
-    if (!config.actors.some((a) => a.toLowerCase() === actor.toLowerCase()))
+    if (!config.actors.some((a) => a.toLowerCase() === actor.toLowerCase())) {
+      if (config.receiveMode === "polling")
+        return { ignored: "Actor is outside the allowlist" };
       throw new HttpError(403, "Actor is outside the allowlist");
+    }
     if (
       body.sender?.type === "Bot" ||
       actor.toLowerCase() === config.botLogin.toLowerCase()

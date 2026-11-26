@@ -188,6 +188,7 @@ export class ApiServer {
       ) {
         const name = path.split("/")[4]!;
         const result = this.app.settings.saveAdapter(name, await readJson(req));
+        if (name === "github") this.app.githubPolling.reconcile();
         if (name === "feishu") this.app.feishuConnection.reconcile();
         this.app.events.emit({
           scope: "system",

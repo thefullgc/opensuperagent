@@ -160,9 +160,9 @@ function AdapterEditor({
   useLocale();
   const [draft, setDraft] = useState<Record<string, string | boolean>>(() => ({
     enabled: !!config.enabled,
-    ...(id === "feishu"
-      ? { receiveMode: String(config.receiveMode ?? "websocket") }
-      : {}),
+    ...(id === "webhook" ? {} : {
+      receiveMode: String(config.receiveMode ?? (id === "github" ? "webhook" : "websocket")),
+    }),
     ...Object.fromEntries(
       fields[id].map((f) => [
         f.id,
@@ -206,6 +206,7 @@ function AdapterEditor({
       clearInterval(timer);
     };
   }, [id, savedConfig]);
+  const polling = id === "github" && draft.receiveMode === "polling";
   const websocket = id === "feishu" && draft.receiveMode !== "webhook";
   const connectionLabels: Record<string, string> = {
     disabled: tr("common.disabled"),
@@ -290,7 +291,9 @@ function AdapterEditor({
   return (
     <div className="adapter-editor">
       <div className="adapter-endpoint">
-        {websocket ? (
+        {polling ? (
+          <small>{tr("adapter.pollScope")}</small>
+        ) : websocket ? (
           <>
             <span>{tr("adapter.feishuWs")}</span>
             <b role="status">
@@ -351,28 +354,33 @@ function AdapterEditor({
             <small>{tr("adapter.saveNote")}</small>
           </span>
         </label>
-        {id === "feishu" && (
+        {(id === "github" || id === "feishu") && (
           <label>
             {tr("adapter.eventMode")}{" "}
             <select
-              aria-label={tr("adapter.feishuEventMode")}
+              aria-label={id === "github" ? tr("adapter.eventMode") : tr("adapter.feishuEventMode")}
               value={String(draft.receiveMode)}
               onChange={(e) =>
                 setDraft((d) => ({ ...d, receiveMode: e.target.value }))
               }
             >
-              <option value="websocket">
-                {tr("adapter.wsOption")}{" "}
-              </option>
+              {id === "github" ? (
+                <option value="polling">{tr("adapter.pollOption")}</option>
+              ) : (
+                <option value="websocket">{tr("adapter.wsOption")}</option>
+              )}
               <option value="webhook">{tr("adapter.webhookOption")}</option>
             </select>
             <small>
-              {tr("adapter.modeNote")}
+              {id === "feishu"
+                ? tr("adapter.modeNote")
+                : polling ? tr("adapter.pollStartHint") : tr("adapter.githubDeliveryHint")}
             </small>
           </label>
         )}
         <div className="adapter-fields">
           {fields[id]
+            .filter(field => !polling || field.id !== "webhookSecret")
             .filter(
               (field) =>
                 !websocket ||
@@ -481,13 +489,11 @@ function AdapterEditor({
         {id === "github" ? (
           <>
             <p>
-              {tr("adapter.githubNote")}{" "}
+              {polling ? tr("adapter.pollPermissions") : tr("adapter.githubNote")}{" "}
             </p>
-            <p>
-              {tr("adapter.githubWebhook")}{" "}
-            </p>
+            {!polling && <p>{tr("adapter.githubWebhook")}</p>}
             <a
-              href="https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries"
+              href={polling ? "https://docs.github.com/en/rest/issues/comments#list-issue-comments-for-a-repository" : "https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries"}
               target="_blank"
               rel="noreferrer"
             >

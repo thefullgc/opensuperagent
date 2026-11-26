@@ -56,6 +56,7 @@ export const RoutingSchema = z.object({
 });
 export type ModelRouting = z.infer<typeof RoutingSchema>;
 const GithubSchema = z.object({
+  receiveMode: z.enum(["webhook", "polling"]).default("webhook"),
   enabled: z.boolean().default(false),
   apiBaseUrl: httpUrl.default("https://api.github.com"),
   token: z.string().max(4096).default(""),
@@ -244,10 +245,23 @@ export class SettingsStore {
       );
     if (
       g.enabled &&
-      (!g.token || !g.webhookSecret || !g.repos.length || !g.actors.length)
+      g.receiveMode === "polling" &&
+      g.repos.some(
+        (repo) =>
+          !/^[\w.-]+\/[\w.-]+$/.test(repo) ||
+          repo.split("/").some((part) => part === "." || part === ".."),
+      )
+    )
+      throw new SettingsError("GitHub repositories must use owner/repo names");
+    if (
+      g.enabled &&
+      (!g.token ||
+        !g.repos.length ||
+        !g.actors.length ||
+        (g.receiveMode === "webhook" && !g.webhookSecret))
     )
       throw new SettingsError(
-        "GitHub requires token, webhook secret, repository and actor allowlists",
+        "GitHub requires a token and repository and actor allowlists. Webhook mode also requires a signing secret.",
       );
     if (
       f.enabled &&

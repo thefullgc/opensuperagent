@@ -602,6 +602,14 @@ export function DetailPanel({
                   <b>{source.count}</b>
                 </div>
               </div>
+              {source.id === "github" && source.configured && (
+                <div className="integration-note">
+                  {source.poll && <p>{tr("adapter.pollChecked", { v0: time(source.poll.lastSuccess, true) })}</p>}
+                  <p>{tr("adapter.githubLastMessage", { v0: time(source.lastAt, true) })}</p>
+                  {source.poll?.error && <p role="alert">{source.poll.error}</p>}
+                  {source.receiveMode === "webhook" && <p>{tr("adapter.githubDeliveryHint")}</p>}
+                </div>
+              )}
               <h3 className="detail-section-heading">{tr("details.routingRules")}</h3>
               <div className="routing-rules">
                 <p>
@@ -620,7 +628,7 @@ export function DetailPanel({
                   <ArrowRightIcon size={14} /> {tr("details.ruleDelivery")}{" "}
                 </p>
               </div>
-              {source.transport !== "available" && (
+              {source.transport !== "available" && !source.poll && (
                 <div className="integration-note">
                   <h3>{tr("details.status")}</h3>
                   <a href="#system" onClick={onClose} className="settings-jump">
